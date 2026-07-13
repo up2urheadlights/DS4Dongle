@@ -16,15 +16,21 @@ float volume[2] = {0.0f,48.0f}; // 0: SPEAKER(0x02) 1: MIC(0x05)
 #define UAC1_ENTITY_SPK_FEATURE_UNIT    0x02
 #define UAC1_ENTITY_MIC_FEATURE_UNIT    0x05
 
+// The DS4's volume byte saturates around 100 -- values beyond that add no
+// loudness (observed on hardware: with a 0..255 mapping the host slider
+// reached max volume at ~10%). Map the USB dB range onto 0..DS4_VOLUME_MAX
+// instead, which also lands at ~1 byte step per dB.
+#define DS4_VOLUME_MAX 100.0f
+
 // Push the current USB mute/volume state to the controller as a DS4 0x11
-// volume report. volume[0] is in dB (-100..0); the DS4 wants 0..255.
+// volume report. volume[0] is in dB (-100..0).
 static void ds4_push_volume() {
     if (get_config().lock_volume) return;
     uint8_t level = 0;
     if (!mute[0]) {
-        float v = (100.0f + volume[0]) * 2.55f;
+        float v = (100.0f + volume[0]) * (DS4_VOLUME_MAX / 100.0f);
         if (v < 0.0f) v = 0.0f;
-        if (v > 255.0f) v = 255.0f;
+        if (v > DS4_VOLUME_MAX) v = DS4_VOLUME_MAX;
         level = static_cast<uint8_t>(v);
     }
     ds4_set_volume(level, level, level);
