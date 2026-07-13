@@ -36,3 +36,11 @@
   to 87. Confirm with a jack→line-in RMS sweep of the raw volume byte to
   find the exact saturation point, and check whether the byte-vs-dB
   response is linear enough or needs a curve.
+
+- **Perceived loudness curve is not linear in slider travel** (feels
+  logarithmic: big jumps at the bottom, compressed at the top). Three curves
+  stack up: the host's cubic slider→dB mapping, our linear dB→byte mapping,
+  and the DS4's unknown byte→gain law. If the RMS sweep (above) shows the
+  byte→gain law is roughly linear in dB, the current mapping is correct and
+  the feel comes from the host curve; otherwise insert a compensation curve
+  in ds4_push_volume().
