@@ -31,7 +31,8 @@
 - **Volume curve fine-tuning.** The USB volume now maps onto DS4 byte 0..100
   (was 0..255, which hit max loudness at ~10% slider). With this mapping the
   slider scales across its full travel, but perceived loudness may top out
-  around ~60% of what the hardware can do (unconfirmed / possibly misheard).
-  If confirmed, sweep DS4_VOLUME_MAX in src/usb.cpp (100 → 110/120/…) with a
-  jack→line-in RMS measurement to find the true saturation point, and check
-  whether the byte-vs-dB response is linear enough or needs a curve.
+  at ~60% slider travel (byte ~87 with the 0..100 mapping — a cubic host
+  slider sends ~-13 dB at 60%), so DS4_VOLUME_MAX in src/usb.cpp is set
+  to 87. Confirm with a jack→line-in RMS sweep of the raw volume byte to
+  find the exact saturation point, and check whether the byte-vs-dB
+  response is linear enough or needs a curve.

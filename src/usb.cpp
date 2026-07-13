@@ -16,11 +16,13 @@ float volume[2] = {0.0f,48.0f}; // 0: SPEAKER(0x02) 1: MIC(0x05)
 #define UAC1_ENTITY_SPK_FEATURE_UNIT    0x02
 #define UAC1_ENTITY_MIC_FEATURE_UNIT    0x05
 
-// The DS4's volume byte saturates around 100 -- values beyond that add no
-// loudness (observed on hardware: with a 0..255 mapping the host slider
-// reached max volume at ~10%). Map the USB dB range onto 0..DS4_VOLUME_MAX
-// instead, which also lands at ~1 byte step per dB.
-#define DS4_VOLUME_MAX 100.0f
+// The DS4's volume byte saturates well below 255 (with a 0..255 mapping the
+// host slider reached max loudness at ~10% travel). Map the USB dB range onto
+// 0..DS4_VOLUME_MAX instead. 87 is derived from listening: with a 0..100
+// mapping, loudness stopped increasing at ~60% slider travel; a cubic host
+// slider sends ~-13 dB there, i.e. byte ~87 = saturation. Confirm with a
+// measured sweep -- see TODO.md.
+#define DS4_VOLUME_MAX 87.0f
 
 // Push the current USB mute/volume state to the controller as a DS4 0x11
 // volume report. volume[0] is in dB (-100..0).
