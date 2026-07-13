@@ -1,0 +1,127 @@
+name: Build firmware
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  PICO_SDK_REF: 2.3.0
+  TINYUSB_REF: 0.21.0
+  PICO_SDK_PATH: ${{ github.workspace }}/pico-sdk
+  ARM_TOOLCHAIN_URL: https://gitlab.arm.com/api/v4/projects/tooling%2Fgnu-toolchains-for-arm/packages/generic/gnu-toolchain/15.2.rel1/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz
+  ARM_TOOLCHAIN_PATH: ${{ github.workspace }}/arm-toolchain
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: production
+            artifact: ds4-bridge
+            cmake_args: ""
+          - name: debug
+            artifact: ds4-bridge-debug
+            cmake_args: "-DENABLE_SERIAL=ON -DENABLE_VERBOSE=ON"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build python3 build-essential
+
+      - name: Cache ARM toolchain
+        id: cache-arm-toolchain
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ARM_TOOLCHAIN_PATH }}
+          key: ${{ runner.os }}-arm-toolchain-15.2.rel1
+
+      - name: Download ARM toolchain
+        if: steps.cache-arm-toolchain.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$ARM_TOOLCHAIN_PATH"
+          curl -fsSL "$ARM_TOOLCHAIN_URL" | tar -xJ -C "$ARM_TOOLCHAIN_PATH" --strip-components=1
+
+      - name: Cache Pico SDK
+        id: cache-pico-sdk
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PICO_SDK_PATH }}
+          key: ${{ runner.os }}-pico-sdk-${{ env.PICO_SDK_REF }}-tinyusb-${{ env.TINYUSB_REF }}
+
+      - name: Download Pico SDK
+        if: steps.cache-pico-sdk.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$PICO_SDK_REF" https://github.com/raspberrypi/pico-sdk.git "$PICO_SDK_PATH"
+          git -C "$PICO_SDK_PATH" submodule update --init --recursive
+          git -C "$PICO_SDK_PATH/lib/tinyusb" fetch --depth 1 origin "refs/tags/$TINYUSB_REF:refs/tags/$TINYUSB_REF"
+          git -C "$PICO_SDK_PATH/lib/tinyusb" checkout --detach "$TINYUSB_REF"
+
+      - name: Build
+        run: |
+          export PATH="$ARM_TOOLCHAIN_PATH/bin:$PATH"
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="$(git rev-parse --short=7 HEAD)"
+          fi
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPICO_SDK_PATH="$PICO_SDK_PATH" \
+            -DVERSION="$VERSION" \
+            ${{ matrix.cmake_args }}
+          cmake --build build
+          mkdir -p artifacts
+          cp build/ds4-bridge.uf2 "artifacts/${{ matrix.artifact }}.uf2"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: artifacts/${{ matrix.artifact }}.uf2
+          if-no-files-found: error
+
+  release:
+    name: Publish prerelease
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create prerelease with UF2s
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            artifacts/ds4-bridge.uf2 \
+            artifacts/ds4-bridge-debug.uf2 \
+            tools/config_tool.py \
+            --repo "${{ github.repository }}" \
+            --title "${{ github.ref_name }}" \
+            --prerelease \
+            --generate-notes || \
+          gh release upload "${{ github.ref_name }}" \
+            artifacts/ds4-bridge.uf2 \
+            artifacts/ds4-bridge-debug.uf2 \
+            tools/config_tool.py \
+            --repo "${{ github.repository }}" --clobber
