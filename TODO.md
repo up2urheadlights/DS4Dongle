@@ -1,5 +1,7 @@
 # TODO
 
+- Add Microphone support
+
 - The volume does scale within 0% and 5% up from 10% it just gets very loud.
   Looks like 10% is the max
 
@@ -43,4 +45,7 @@
   and the DS4's unknown byte→gain law. If the RMS sweep (above) shows the
   byte→gain law is roughly linear in dB, the current mapping is correct and
   the feel comes from the host curve; otherwise insert a compensation curve
-  in ds4_push_volume().
+  in ds4_push_volume(). By-ear data so far is inconsistent (0..100 mapping
+  pegged at ~60% slider, 0..87 mapping at ~20%) — no host-curve model fits
+  both, so stop tuning by ear: do the measured sweep (jack→line-in, fixed
+  tone, step the host volume, RMS per step) and derive the mapping from data.
