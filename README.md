@@ -8,6 +8,8 @@ Adapted from [awalol/DS5Dongle](https://github.com/awalol/DS5Dongle), which
 does the same for the DualSense. If you have a DualSense, use DS5Dongle
 directly.
 
+See [Releases](https://github.com/snipem/DS4Dongle/releases) for the images.
+
 > **Status: pre-release.** Works on the author's hardware (DS4 v1 + Pico 2 W,
 > Linux host). Microphone input is not implemented yet. Expect rough edges.
 
