@@ -894,11 +894,39 @@ void init_feature() {
 // Build and queue a DS4 BT output report 0x11. `payload` is the USB-0x05-style
 // payload (flags byte first); layout is identical between USB 0x05 bytes 1..N
 // and BT 0x11 bytes 3..N+2. bt_write() prepends 0xA2 and fills the CRC-32.
+// Output 0x11 header byte 2: bit7 EnableAudio, bit5 always-set, bits 0-2
+// EnableMic (per controllers.fandom.com DS4 Data Structures). Overridable at
+// runtime (0xF6 func 0x07) for the mic-enable research.
+static uint8_t ds4_out_hdr2 = 0x20;
+
+void ds4_set_output_hdr2(uint8_t v) {
+    ds4_out_hdr2 = v;
+}
+
+uint8_t ds4_get_output_hdr2() {
+    return ds4_out_hdr2;
+}
+
+// Start/stop headset-mic streaming: EnableMic bit 2 makes the controller
+// switch its input reports from 0x11 to 0x13 (state + one SBC mic frame).
+// The header only takes effect with the next output report, so send a
+// no-op one immediately.
+void ds4_enable_mic(bool on) {
+    ds4_set_output_hdr2(on ? 0x24 : 0x20);
+    // Carry a mic volume with the enable: VolumeMic 0x00 has "special
+    // behavior" (psdevwiki) and the enable was only seen to take effect on
+    // an output that also set volumes.
+    uint8_t payload[31]{};
+    payload[0] = 0x40;  // EnableVolumeMicUpdate
+    payload[20] = on ? 0x40 : 0x00; // VolumeMic (0x01..0x40)
+    ds4_output(payload, sizeof(payload));
+}
+
 void ds4_output(const uint8_t *payload, uint16_t payload_len) {
     uint8_t pkt[78]{}; // 0x11 report: 74 data + 4 CRC
     pkt[0] = 0x11;
     pkt[1] = 0xC0; // HID + CRC
-    pkt[2] = 0x20;
+    pkt[2] = ds4_out_hdr2;
     if (payload_len > 71) payload_len = 71;
     memcpy(pkt + 3, payload, payload_len);
     bt_write(pkt, sizeof(pkt));

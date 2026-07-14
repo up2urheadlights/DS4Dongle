@@ -29,8 +29,11 @@
 #include "utils.h"
 #include "pico/multicore.h"
 #include "pico/flash.h"
+#include "pico/time.h"
 #include "pico/util/queue.h"
 #include "config.h"
+
+extern bool spk_active; // host has the speaker OUT interface open (main.cpp)
 
 extern "C" {
 #include "classic/btstack_sbc_bluedroid.h"
@@ -43,6 +46,15 @@ extern "C" {
 // Audio header byte (report offset 5): target of the SBC payload.
 #define AUDIO_TARGET_SPEAKER 0x02
 #define AUDIO_TARGET_HEADSET 0x24
+
+// Headset mic (BT input report 0x13, reverse-engineered 2026-07-14): one SBC
+// frame per report at offset 82 (after the 0xA1 transport byte, report id,
+// 2 header bytes, 71-byte state block and a 7-byte audio header), zero-padded
+// to the fixed report size. SBC header 9c 31 1d = 16 kHz mono, 16 blocks,
+// 8 subbands, loudness, bitpool 29 -> 66-byte frames, 128 samples = 8 ms.
+#define MIC_SBC_FRAME_LEN 66
+#define MIC_SBC_SCAN_FROM 75 // audio header start; frame is found by 0x9C syncword
+#define MIC_PCM_SAMPLES   128 // mono 16 kHz samples per frame
 
 static bool plug_headset = false;
 static bool mic_active = false; // host has opened the mic IN interface (alt != 0)
@@ -57,8 +69,18 @@ struct sbc_frame {
     uint8_t data[SBC_FRAME_LEN];
 };
 
+struct mic_sbc_frame {
+    uint8_t data[MIC_SBC_FRAME_LEN];
+};
+
+struct mic_pcm_block {
+    int16_t data[MIC_PCM_SAMPLES]; // mono 16 kHz
+};
+
 queue_t audio_fifo; // raw pcm blocks core0 -> core1
 queue_t sbc_fifo;   // encoded sbc frames core1 -> core0
+static queue_t mic_sbc_fifo; // mic sbc frames core0 (BT) -> core1 (decode)
+static queue_t mic_pcm_fifo; // decoded mic pcm core1 -> core0 (USB IN)
 
 void set_headset(bool state) {
     plug_headset = state;
@@ -69,10 +91,33 @@ bool audio_headset_plugged() {
 }
 
 // Called from tud_audio_set_itf_cb when the host opens/closes the mic IN
-// interface. DS4 mic input over BT is not implemented yet; the host just
-// records silence.
+// interface. Tells the controller to start/stop streaming headset-mic audio
+// (input report 0x13).
 void set_mic_active(bool active) {
     mic_active = active;
+    ds4_enable_mic(active && get_config().mic_select != 3);
+}
+
+// BT input report 0x13 (state + mic audio): locate the SBC frame by its
+// syncword and queue it for the core1 decoder. Called from the BT data path.
+void __not_in_flash_func(audio_mic_bt_data)(const uint8_t *data, uint16_t len) {
+    static uint32_t frames = 0, last_log_ms = 0;
+    if (!mic_active || get_config().mic_select == 3) return;
+    for (uint16_t i = MIC_SBC_SCAN_FROM; i + MIC_SBC_FRAME_LEN <= len - 4; i++) {
+        if (data[i] != 0x9C) continue;
+        if (queue_is_full(&mic_sbc_fifo)) {
+            queue_try_remove(&mic_sbc_fifo, NULL);
+        }
+        queue_try_add(&mic_sbc_fifo, data + i);
+        frames++;
+        i += MIC_SBC_FRAME_LEN - 1; // in case a report ever carries more than one frame
+    }
+    const uint32_t now = to_ms_since_boot(get_absolute_time());
+    if (now - last_log_ms >= 2000) {
+        last_log_ms = now;
+        printf("[MIC] sbc frames=%lu sbc_q=%u pcm_q=%u\n",
+               frames, queue_get_level(&mic_sbc_fifo), queue_get_level(&mic_pcm_fifo));
+    }
 }
 
 bool audio_mic_active() {
@@ -101,7 +146,10 @@ static void __not_in_flash_func(audio_bt_task)() {
     uint8_t pkt[REPORT_SIZE]{};
     pkt[0] = 0x17;
     pkt[1] = 0x40;
-    pkt[2] = 0xA0;
+    // Audio header; carry the mic-enable bits so the mic keeps streaming
+    // while speaker audio is active (the controller sends one mic report per
+    // received output report).
+    pkt[2] = 0xA0 | (ds4_get_output_hdr2() & 0x07);
     pkt[3] = frame_counter & 0xFF;
     pkt[4] = (frame_counter >> 8) & 0xFF;
     pkt[5] = target;
@@ -117,11 +165,57 @@ static void __not_in_flash_func(audio_bt_task)() {
     bt_write(pkt, sizeof(pkt));
 }
 
+// Decoded mic PCM (16 kHz mono) -> USB IN FIFO as 32 kHz stereo via 2x
+// linear interpolation.
+static void __not_in_flash_func(mic_usb_task)() {
+    mic_pcm_block block{};
+    if (!queue_try_remove(&mic_pcm_fifo, &block)) {
+        return;
+    }
+    if (!mic_active) return;
+
+    static int16_t prev = 0;
+    static int16_t out[MIC_PCM_SAMPLES * 4]; // 2x rate, 2 channels
+    for (int i = 0; i < MIC_PCM_SAMPLES; i++) {
+        const int16_t s = block.data[i];
+        const int16_t mid = static_cast<int16_t>((prev + s) / 2);
+        out[i * 4 + 0] = mid;
+        out[i * 4 + 1] = mid;
+        out[i * 4 + 2] = s;
+        out[i * 4 + 3] = s;
+        prev = s;
+    }
+    const uint16_t written = tud_audio_write(out, sizeof(out));
+    static uint32_t blocks = 0, shorts = 0, last_log_ms = 0;
+    blocks++;
+    if (written < sizeof(out)) shorts++;
+    const uint32_t now = to_ms_since_boot(get_absolute_time());
+    if (now - last_log_ms >= 2000) {
+        last_log_ms = now;
+        printf("[MIC] usb blocks=%lu short_writes=%lu\n", blocks, shorts);
+    }
+}
+
 void __not_in_flash_func(audio_loop)() {
     // Ensure core1 has initialized the encoder before we process audio
     if (!core1_ready) return;
 
     audio_bt_task();
+    mic_usb_task();
+
+    // The controller sends one mic report (0x13) per output report it
+    // receives. While the mic is open and no speaker audio is clocking the
+    // link with 0x17 reports, prod it with a no-op 0x11 output every 8 ms
+    // (one SBC mic frame period).
+    if (mic_active && get_config().mic_select != 3 && !spk_active) {
+        static uint64_t last_keepalive_us = 0;
+        const uint64_t now_us = time_us_64();
+        if (now_us - last_keepalive_us >= 8000) {
+            last_keepalive_us = now_us;
+            const uint8_t payload[31]{}; // flags 0x00: change nothing
+            ds4_output(payload, sizeof(payload));
+        }
+    }
 
     // Read USB speaker PCM and chunk it into SBC-frame-sized blocks.
     if (!tud_audio_available()) return;
@@ -150,6 +244,8 @@ void __not_in_flash_func(audio_loop)() {
 void audio_init() {
     queue_init(&audio_fifo, sizeof(pcm_block), 4);
     queue_init(&sbc_fifo, sizeof(sbc_frame), 2 * FRAMES_PER_REPORT);
+    queue_init(&mic_sbc_fifo, sizeof(mic_sbc_frame), 8);
+    queue_init(&mic_pcm_fifo, sizeof(mic_pcm_block), 8);
 #if ENABLE_DEBUG
     debug_fill_core1_stack_watermark(audio_core1_stack,
                                      sizeof(audio_core1_stack) / sizeof(audio_core1_stack[0]));
@@ -159,6 +255,32 @@ void audio_init() {
 
 static btstack_sbc_encoder_bluedroid_t sbc_encoder_ctx;
 static const btstack_sbc_encoder_t *sbc_encoder;
+
+static btstack_sbc_decoder_bluedroid_t sbc_decoder_ctx;
+static const btstack_sbc_decoder_t *sbc_decoder;
+
+// Decoder callback (core1): one mic SBC frame yields 128 mono samples.
+static void mic_handle_pcm(int16_t *data, int num_samples, int num_channels,
+                           int sample_rate, void *context) {
+    (void) sample_rate;
+    (void) context;
+    if (num_channels != 1 || num_samples != MIC_PCM_SAMPLES) {
+        return; // unexpected format; drop
+    }
+    if (queue_is_full(&mic_pcm_fifo)) {
+        queue_try_remove(&mic_pcm_fifo, NULL);
+    }
+    queue_try_add(&mic_pcm_fifo, data);
+}
+
+// Mic SBC frames from core0 -> decode -> mic_pcm_fifo for the USB IN stream.
+static void __not_in_flash_func(mic_proc)() {
+    mic_sbc_frame frame{};
+    if (!queue_try_remove(&mic_sbc_fifo, &frame)) {
+        return;
+    }
+    sbc_decoder->decode_signed_16(&sbc_decoder_ctx, 0, frame.data, sizeof(frame.data));
+}
 
 // PCM blocks from core0 -> SBC encode -> sbc_fifo for the 0x17 reports.
 static void __not_in_flash_func(speaker_proc)() {
@@ -202,10 +324,15 @@ void __not_in_flash_func(core1_entry)() {
         return;
     }
 
+    // Mic decoder: format is taken from each frame's SBC header.
+    sbc_decoder = btstack_sbc_decoder_bluedroid_init_instance(&sbc_decoder_ctx);
+    sbc_decoder->configure(&sbc_decoder_ctx, SBC_MODE_STANDARD, mic_handle_pcm, NULL);
+
     // Signal core0 that the encoder is ready
     core1_ready = true;
 
     while (true) {
         speaker_proc();
+        mic_proc();
     }
 }

@@ -87,6 +87,8 @@ void pico_cmd_set(uint8_t report_id, uint8_t const *buffer, uint16_t bufsize) {
     //      overwrites it)
     // 0x06 send a raw DS4 0x11 output-report payload (debug: poke
     //      flag bytes from the host, e.g. for the mic-enable research)
+    // 0x07 set the 0x11 output header byte 2 for subsequent outputs
+    //      (debug: bits 0-2 = EnableMic, bit7 = EnableAudio)
     if (buffer[0] == 0x01) {
 #if ENABLE_VERBOSE
         printf("[CMD] Enter config set func\n");
@@ -119,5 +121,9 @@ void pico_cmd_set(uint8_t report_id, uint8_t const *buffer, uint16_t bufsize) {
         memcpy(payload, buffer + 1, n);
         printf("[CMD] Raw output report, flags 0x%02X\n", payload[0]);
         ds4_output(payload, sizeof(payload));
+    }
+    if (buffer[0] == 0x07 && bufsize >= 2) {
+        printf("[CMD] Output header byte2 = 0x%02X\n", buffer[1]);
+        ds4_set_output_hdr2(buffer[1]);
     }
 }

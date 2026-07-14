@@ -16,5 +16,7 @@ void set_headset(bool state);
 bool audio_headset_plugged();
 void set_mic_active(bool active);
 bool audio_mic_active();
+// Feed a BT input report 0x13 (state + mic SBC frame) into the mic pipeline.
+void audio_mic_bt_data(const uint8_t *data, uint16_t len);
 
 #endif //DS4_BRIDGE_AUDIO_H

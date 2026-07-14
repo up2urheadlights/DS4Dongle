@@ -91,7 +91,10 @@ void __not_in_flash_func(on_bt_data)(CHANNEL_TYPE channel, uint8_t *data, uint16
     // Mic research: headset-mic audio is expected to arrive as a bigger input
     // report (0x14/0x15/...; undocumented). Log unfamiliar interrupt reports,
     // rate-limited so the hot path stays cheap.
-    if (channel == INTERRUPT && len >= 2 && data[1] != 0x11) {
+    // Log unfamiliar interrupt reports (rate-limited): 0x11 is the normal
+    // input; 0x12..0x19 are state + headset-mic audio in increasing sizes
+    // (the controller picks the size; handled below).
+    if (channel == INTERRUPT && len >= 2 && (data[1] < 0x11 || data[1] > 0x19)) {
         static uint32_t last_log_ms = 0;
         const uint32_t now = to_ms_since_boot(get_absolute_time());
         if (now - last_log_ms >= 1000) {
@@ -101,7 +104,12 @@ void __not_in_flash_func(on_bt_data)(CHANNEL_TYPE channel, uint8_t *data, uint16
             printf("\n");
         }
     }
-    if (channel == INTERRUPT && len >= 4 + 63 && data[1] == 0x11) {
+    // Mic audio rides in reports 0x12..0x19 after a state block that is
+    // layout-identical to 0x11's.
+    if (channel == INTERRUPT && len >= 4 + 63 && data[1] >= 0x12 && data[1] <= 0x19) {
+        audio_mic_bt_data(data, len);
+    }
+    if (channel == INTERRUPT && len >= 4 + 63 && data[1] >= 0x11 && data[1] <= 0x19) {
         // Battery/ext byte: bit5 = headset plugged into the controller jack.
         set_headset((data[4 + 29] & 0x20) != 0);
 

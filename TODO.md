@@ -21,18 +21,15 @@
 
 - Add Microphone support or check if working. I will wire the cable to my speaker out for that. Ask me to do it.
 
-- Device is detected as "clone" by https://dualshock-tools.github.io/ and "fake" by https://ds.daidr.me/ why is that?
-  Lead (2026-07-14): hid-playstation logs "Invalid byte count transferred,
-  expected 49 got 45 / Failed to retrieve DualShock4 firmware info: -22" at
-  every plug-in — feature report 0xA3 (firmware info) comes back 4 bytes
-  short over USB. main.cpp's generic BT→USB feature forwarding strips
-  1 id + 4 CRC bytes from the BT response; for 0xA3 that leaves 45 instead
-  of the 49 a real DS4 returns. Confirmed in dualshock-tools source
-  (js/controllers/ds4-controller.js getInfo): clone = 0xA3 response not
-  exactly 49 bytes, plus feature 0x81 must succeed (it does). Fix
-  implemented (0xA3 zero-padded to 48+id bytes); verify against both web
-  tools after reflashing. ds.daidr.me source not found; likely probes the
-  same report.
+- ~~Device is detected as "clone"/"fake" by the web tools.~~ **Resolved
+  2026-07-14, verified against both sites.** Cause: feature report 0xA3
+  (firmware info) came back 45 instead of 49 bytes over USB — the BT
+  response is 3 bytes shorter and the CRC stripping accounts for the rest;
+  dualshock-tools' clone check (js/controllers/ds4-controller.js getInfo)
+  requires exactly 49 bytes plus a successful 0x81 read. Fixed by
+  zero-padding 0xA3 to 48+id bytes; both https://dualshock-tools.github.io/
+  and https://ds.daidr.me/ now report the device as genuine, and
+  hid-playstation no longer logs "expected 49 got 45" at plug-in.
 
 - Make sure that 2 or more of these firmware dongles are working on one system
 
@@ -61,15 +58,31 @@
   `tools/config_tool.py set polling_rate_mode=1` plus a replug if problems
   show up.
 
-- Microphone input (headset mic through the TRRS jack): BT report format is
-  undocumented; needs a capture session against a PS4. Descriptor is present,
-  streams silence. Findings 2026-07-14: a PC line-out wired into the jack is
-  NOT enough — the DS4 senses a mic via DC load on the TRRS sleeve and
-  reports headphones=1 mic=0 (input-report ext byte bit 6), and it streams no
-  extra BT reports then, regardless of output volume-flag pokes (tried via
-  0xF6/0x06 raw output debug cmd). Next: plug a real CTIA headset (mic=1),
-  then watch the debug console ([BT] logger in on_bt_data) for the mic report
-  id; alternatively put ~2.2 kΩ sleeve→GND in parallel with the line feed.
+- ~~Microphone input (headset mic through the TRRS jack).~~ **WORKING as of
+  2026-07-14** — first capture verified (EarPods mic → BT → SBC decode → USB
+  IN → parecord). Protocol (reverse-engineered, none of it documented):
+  - The DS4 only offers the mic when it detects a DC load on the TRRS
+    sleeve (real headset). ext byte bit 6 = mic present. A bare line-out
+    into the jack is not detected.
+  - Enable: output-report header byte 2 bit 2 (0x24 instead of 0x20).
+    The controller then sends one mic-audio input report per output report
+    it receives — it must be clocked like a PS4 does; firmware sends a
+    no-op 0x11 output every 8 ms while the USB mic is open and speaker
+    audio isn't already clocking the link (mic bits are also carried on
+    the 0x17 speaker reports).
+  - Mic audio arrives in input reports 0x12..0x19 (controller picks the
+    size; observed 0x13 at 1 frame/report and 0x16 at 4 frames/report):
+    state block (same layout as 0x11) + SBC frames found by 0x9C syncword.
+    Format: 16 kHz mono, 16 blocks, 8 subbands, loudness, bitpool 29,
+    66-byte frames (header 9c 31 1d).
+  - Firmware decodes with btstack's bluedroid SBC decoder on core1 and
+    upsamples 16k mono → 32k stereo (linear interpolation) for the USB IN
+    endpoint.
+  Remaining: voice-quality listening test, simultaneous speaker+mic
+  (full duplex) test, decide mic_select semantics (builtin vs headset mic —
+  the EnableMic field is 3 bits; bit meanings beyond 0x04 unknown), and
+  whether the 8 ms keepalive should be replaced by echoing the host's
+  output-report cadence.
 
 - Dual audio sinks (speaker + headphone jack as two USB audio functions):
   first attempt failed; retry on top of the fixed sequential L2CAP pairing
