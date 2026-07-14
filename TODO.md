@@ -63,7 +63,13 @@
 
 - Microphone input (headset mic through the TRRS jack): BT report format is
   undocumented; needs a capture session against a PS4. Descriptor is present,
-  streams silence.
+  streams silence. Findings 2026-07-14: a PC line-out wired into the jack is
+  NOT enough — the DS4 senses a mic via DC load on the TRRS sleeve and
+  reports headphones=1 mic=0 (input-report ext byte bit 6), and it streams no
+  extra BT reports then, regardless of output volume-flag pokes (tried via
+  0xF6/0x06 raw output debug cmd). Next: plug a real CTIA headset (mic=1),
+  then watch the debug console ([BT] logger in on_bt_data) for the mic report
+  id; alternatively put ~2.2 kΩ sleeve→GND in parallel with the line feed.
 
 - Dual audio sinks (speaker + headphone jack as two USB audio functions):
   first attempt failed; retry on top of the fixed sequential L2CAP pairing
