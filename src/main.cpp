@@ -197,8 +197,20 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
     if (feature_data.size() <= 1 + 4) {
         return 0;
     }
-    const uint16_t payload_len = feature_data.size() - 1 - 4;
+    uint16_t payload_len = feature_data.size() - 1 - 4;
+    if (payload_len > reqlen) payload_len = reqlen;
     memcpy(buffer, feature_data.data() + 1, payload_len);
+
+    // 0xA3 firmware info: the BT payload is 3 bytes shorter than the USB
+    // report. hid-playstation ("expected 49 got 45") and the dualshock-tools
+    // clone check both require the full 48+id bytes; every field they parse
+    // (build date, hw/sw versions, all < offset 0x2d) fits in the BT payload,
+    // so zero-pad the tail.
+    constexpr uint16_t A3_USB_PAYLOAD_LEN = 48;
+    if (report_id == 0xA3 && payload_len < A3_USB_PAYLOAD_LEN && reqlen >= A3_USB_PAYLOAD_LEN) {
+        memset(buffer + payload_len, 0, A3_USB_PAYLOAD_LEN - payload_len);
+        payload_len = A3_USB_PAYLOAD_LEN;
+    }
     return payload_len;
 }
 
