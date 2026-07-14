@@ -13,19 +13,15 @@
 
 - use tools/config_tool.py to make configurations accessible
 
-- **Polling rate: config SET_REPORT never reaches the firmware.** The dongle
-  supports three HID polling modes (`polling_rate_mode`: 0 = 250 Hz,
-  1 = 500 Hz, 2 = 1000 Hz "real-time"; current/default is 1). Setting it via
-  `tools/config_tool.py set polling_rate_mode=2` silently fails: GET feature
-  reports (0xF7 config, 0xF8 version) work, but the 0xF6 SET_REPORT is never
-  seen by `tud_hid_set_report_cb` / `pico_cmd_set` (no `[CMD]` output on the
-  debug console, config unchanged after re-read; the tool's readback shows a
-  bogus clamp to 255). Needs investigation of the TinyUSB control SET_REPORT
-  path for feature reports not present in the HID report descriptor
-  (0xF6–0xF9 are firmware-only IDs). Once settable, mode 2 is expected to be
-  safe for audio: the isochronous audio endpoints run at 1 ms frames
-  regardless of the HID bInterval, and full-speed bus bandwidth has ample
-  headroom (~390 of ~1150 bytes per frame worst-case).
+- ~~Polling rate: config SET_REPORT never reaches the firmware.~~ **Resolved
+  2026-07-14: does not reproduce against the current firmware.**
+  `config_tool.py set polling_rate_mode=2` updates RAM and flash, and after a
+  0xF6/0x03 USB reconnect the gamepad endpoints enumerate with bInterval 1
+  (1000 Hz). The earlier failure was most likely an older flashed build (the
+  dongle has been reflashed since for the volume-mapping commits). Mode 2 is
+  now active on the test dongle; revert with
+  `tools/config_tool.py set polling_rate_mode=1` plus a replug if problems
+  show up.
 
 - Microphone input (headset mic through the TRRS jack): BT report format is
   undocumented; needs a capture session against a PS4. Descriptor is present,
