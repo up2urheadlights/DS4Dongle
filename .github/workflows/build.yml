@@ -30,6 +30,9 @@ jobs:
           - name: debug
             artifact: ds4-bridge-debug
             cmake_args: "-DENABLE_SERIAL=ON -DENABLE_VERBOSE=ON"
+          - name: waveshare
+            artifact: ds4-bridge-waveshare
+            cmake_args: "-DWAVESHARE_RP2350B_PLUS_W_BUILD=ON"
 
     steps:
       - name: Checkout
@@ -115,6 +118,7 @@ jobs:
           gh release create "${{ github.ref_name }}" \
             artifacts/ds4-bridge.uf2 \
             artifacts/ds4-bridge-debug.uf2 \
+            artifacts/ds4-bridge-waveshare.uf2 \
             tools/config_tool.py \
             --repo "${{ github.repository }}" \
             --title "${{ github.ref_name }}" \
@@ -123,5 +127,6 @@ jobs:
           gh release upload "${{ github.ref_name }}" \
             artifacts/ds4-bridge.uf2 \
             artifacts/ds4-bridge-debug.uf2 \
+            artifacts/ds4-bridge-waveshare.uf2 \
             tools/config_tool.py \
             --repo "${{ github.repository }}" --clobber
