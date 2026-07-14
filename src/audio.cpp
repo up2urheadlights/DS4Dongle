@@ -306,6 +306,11 @@ static btstack_sbc_decoder_bluedroid_t sbc_decoder_ctx;
 static const btstack_sbc_decoder_t *sbc_decoder;
 
 // Decoder callback (core1): one mic SBC frame yields 128 mono samples.
+// bluedroid initializes the OI codec with pcmStride 2 (hardcoded in
+// btstack_sbc_bluedroid.c), so mono output arrives with every sample
+// duplicated into stereo-interleaved slots even though num_channels claims
+// plain mono. Reading the buffer linearly halves the speed and drops each
+// frame's second half; take every other sample.
 static void mic_handle_pcm(int16_t *data, int num_samples, int num_channels,
                            int sample_rate, void *context) {
     (void) sample_rate;
@@ -313,10 +318,14 @@ static void mic_handle_pcm(int16_t *data, int num_samples, int num_channels,
     if (num_channels != 1 || num_samples != MIC_PCM_SAMPLES) {
         return; // unexpected format; drop
     }
+    mic_pcm_block block;
+    for (int i = 0; i < MIC_PCM_SAMPLES; i++) {
+        block.data[i] = data[i * 2];
+    }
     if (queue_is_full(&mic_pcm_fifo)) {
         queue_try_remove(&mic_pcm_fifo, NULL);
     }
-    queue_try_add(&mic_pcm_fifo, data);
+    queue_try_add(&mic_pcm_fifo, &block);
 }
 
 // Mic SBC frames from core0 -> decode -> mic_pcm_fifo for the USB IN stream.
