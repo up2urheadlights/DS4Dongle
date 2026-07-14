@@ -123,21 +123,22 @@
 #define CFG_TUD_AUDIO_FUNC_1_N_BYTES_PER_SAMPLE_RX      2
 #define CFG_TUD_AUDIO_FUNC_1_RESOLUTION_RX              16
 
-// Microphone (IN/TX) path: 1-channel, 16-bit
-#define CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_TX              2
+// Microphone (IN/TX) path: 1-channel, 16-bit, 16 kHz -- the real DS4 v2's
+// mic format, straight from the SBC decoder with no resampling.
+#define CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_TX              1
 #define CFG_TUD_AUDIO_FUNC_1_N_BYTES_PER_SAMPLE_TX      2
 #define CFG_TUD_AUDIO_FUNC_1_RESOLUTION_TX              16
 
-// UAC1 Full-Speed endpoint size. 32 kHz = the DS4's native BT audio rate.
+// UAC1 Full-Speed endpoint sizes. Speaker: 32 kHz = the DS4's native BT audio
+// rate. Mic: 16 kHz, matching the real DS4 v2's IN interface.
 #define CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE            32000
+#define CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE_TX         16000
 #define CFG_TUD_AUDIO_FUNC_1_FORMAT_1_EP_SZ_OUT     TUD_AUDIO_EP_SIZE(false, CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE, CFG_TUD_AUDIO_FUNC_1_N_BYTES_PER_SAMPLE_RX, CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX)
-#define CFG_TUD_AUDIO_FUNC_1_FORMAT_1_EP_SZ_IN      TUD_AUDIO_EP_SIZE(false, CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE, CFG_TUD_AUDIO_FUNC_1_N_BYTES_PER_SAMPLE_TX, CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_TX)
+#define CFG_TUD_AUDIO_FUNC_1_FORMAT_1_EP_SZ_IN      TUD_AUDIO_EP_SIZE(false, CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE_TX, CFG_TUD_AUDIO_FUNC_1_N_BYTES_PER_SAMPLE_TX, CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_TX)
 #define CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_MAX          CFG_TUD_AUDIO_FUNC_1_FORMAT_1_EP_SZ_OUT
-// Mic IN packets carry 2 ms of audio (264 B): with nominal 1 ms packets the
-// ISO IN endpoint only transmitted on every other frame (re-arm missed the
-// next SOF) and the host received half the sample rate. Must match the
-// EP2 wMaxPacketSize in usb_descriptors.cpp.
-#define CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX           (2 * CFG_TUD_AUDIO_FUNC_1_FORMAT_1_EP_SZ_IN)
+// One 1 ms frame per packet. Must match the EP2 wMaxPacketSize in
+// usb_descriptors.cpp (34 B = 17 samples * 1 ch * 2 bytes).
+#define CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX           CFG_TUD_AUDIO_FUNC_1_FORMAT_1_EP_SZ_IN
 
 #define CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ       (8 * CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_MAX)
 #define CFG_TUD_AUDIO_FUNC_1_EP_IN_SW_BUF_SZ        (16 * CFG_TUD_AUDIO_FUNC_1_EP_IN_SZ_MAX)
@@ -145,6 +146,13 @@
 // Enable OUT EP (speaker) and IN EP (mic)
 #define CFG_TUD_AUDIO_ENABLE_EP_OUT                 1
 #define CFG_TUD_AUDIO_ENABLE_EP_IN                  1
+
+// The mic IN endpoint is paced from tud_audio_tx_done_isr (audio.cpp), which
+// deposits exactly one 32-byte frame per SOF like the real DS4 v2 does. The
+// driver's adaptive 30/32/34 flow control must not second-guess that (its
+// under-30-bytes case sends zero-length frames, which Windows' rate-locked
+// capture engine turns into audible chopping).
+#define CFG_TUD_AUDIO_EP_IN_FLOW_CONTROL            0
 
 // CDC FIFO size of TX and RX
 #define CFG_TUD_CDC_RX_BUFSIZE   64

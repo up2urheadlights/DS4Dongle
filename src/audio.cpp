@@ -59,10 +59,6 @@ extern "C" {
 static bool plug_headset = false;
 static bool mic_active = false; // host has opened the mic IN interface (alt != 0)
 
-// Mic USB staging ring (see mic_usb_task).
-#define MIC_RING_BYTES 8192 // 64 ms of 32 kHz stereo S16
-static uint8_t mic_ring[MIC_RING_BYTES];
-static volatile uint32_t mic_ring_head = 0, mic_ring_tail = 0; // head=write
 static volatile bool core1_ready = false;
 alignas(8) static uint32_t audio_core1_stack[2048];
 
@@ -85,7 +81,13 @@ struct mic_pcm_block {
 queue_t audio_fifo; // raw pcm blocks core0 -> core1
 queue_t sbc_fifo;   // encoded sbc frames core1 -> core0
 static queue_t mic_sbc_fifo; // mic sbc frames core0 (BT) -> core1 (decode)
-static queue_t mic_pcm_fifo; // decoded mic pcm core1 -> core0 (USB IN)
+static queue_t mic_pcm_fifo; // decoded mic pcm core1 -> core0 (USB IN ISR)
+
+// Mic USB delivery state, owned by the EP IN reload ISR (tud_audio_tx_done_isr).
+static mic_pcm_block mic_cur;
+static uint16_t mic_cur_pos = 0; // samples consumed from mic_cur
+static bool mic_cur_valid = false;
+static volatile bool mic_streaming = false; // jitter buffer filled, consuming
 
 void set_headset(bool state) {
     plug_headset = state;
@@ -106,7 +108,8 @@ void set_mic_active(bool active) {
         // (a garbage frame can leave the OI decoder without sync forever).
         while (queue_try_remove(&mic_sbc_fifo, NULL)) {}
         while (queue_try_remove(&mic_pcm_fifo, NULL)) {}
-        mic_ring_tail = mic_ring_head;
+        mic_streaming = false;
+        mic_cur_valid = false;
         mic_decoder_reset_pending = true;
     }
     mic_active = active;
@@ -183,63 +186,56 @@ static void __not_in_flash_func(audio_bt_task)() {
     bt_write(pkt, sizeof(pkt));
 }
 
-// Decoded mic PCM (16 kHz mono) -> staging ring as 32 kHz stereo (2x linear
-// interpolation) -> USB IN FIFO in at most one packet per loop pass.
-//
-// Feeding the TinyUSB IN FIFO in 1024-byte lumps every 8 ms starved the
-// isochronous endpoint (its flow control holds off transmission around a
-// FIFO threshold) and the host only received ~30% of the audio, torn into
-// chunks. The ring keeps a small backlog and trickles packet-sized chunks
-// so the endpoint always has data for the next frame.
-static void __not_in_flash_func(mic_usb_task)() {
-    // Refill the ring from decoded blocks.
-    mic_pcm_block block{};
-    while (queue_try_remove(&mic_pcm_fifo, &block)) {
-        if (!mic_active) continue;
+// EP IN reload, called from the TinyUSB ISR after every ISO IN frame while
+// the mic interface is open. The real DS4 v2 ships exactly 32 bytes (16
+// samples) every single frame, silence included; Windows' rate-locked
+// capture engine turns short or empty frames into audible chopping. So:
+// always deposit exactly one frame, padding with silence on underrun.
+// tud_audio_write is called only from here, so the FIFO holds at most one
+// frame and the driver sends exactly what we deposit. Reloading inside the
+// completion ISR (not the main loop) is also what keeps every SOF fed --
+// main-loop feeding misses alternate frames and halves the delivered rate.
+extern "C" bool __not_in_flash_func(tud_audio_tx_done_isr)(uint8_t rhport, uint16_t n_bytes_sent,
+                                                           uint8_t func_id, uint8_t ep_in,
+                                                           uint8_t cur_alt_setting) {
+    (void) rhport;
+    (void) n_bytes_sent;
+    (void) func_id;
+    (void) ep_in;
+    (void) cur_alt_setting;
 
-        static int16_t prev = 0;
-        int16_t out[MIC_PCM_SAMPLES * 4]; // 2x rate, 2 channels
-        for (int i = 0; i < MIC_PCM_SAMPLES; i++) {
-            const int16_t s = block.data[i];
-            const int16_t mid = static_cast<int16_t>((prev + s) / 2);
-            out[i * 4 + 0] = mid;
-            out[i * 4 + 1] = mid;
-            out[i * 4 + 2] = s;
-            out[i * 4 + 3] = s;
-            prev = s;
+    int16_t frame[16]; // 1 ms at 16 kHz mono
+
+    // Jitter buffer: BT delivers mic audio in report bursts, so start
+    // consuming only once a reserve is queued, and go back to buffering
+    // when it runs dry.
+    if (!mic_streaming) {
+        if (queue_get_level(&mic_pcm_fifo) >= 6) { // ~48 ms buffered
+            mic_streaming = true;
+        } else {
+            memset(frame, 0, sizeof(frame));
+            tud_audio_write(frame, sizeof(frame));
+            return true;
         }
-        uint32_t used = mic_ring_head - mic_ring_tail;
-        if (MIC_RING_BYTES - used < sizeof(out)) {
-            // Producer (BT, ~32.25 kHz effective) slightly outruns the host
-            // (32.0 kHz): drop the oldest block to stay bounded.
-            mic_ring_tail += sizeof(out);
-        }
-        for (uint32_t i = 0; i < sizeof(out); i++) {
-            mic_ring[(mic_ring_head + i) % MIC_RING_BYTES] = reinterpret_cast<uint8_t *>(out)[i];
-        }
-        mic_ring_head += sizeof(out);
     }
 
-    // Trickle at most one USB packet per pass into the TinyUSB FIFO.
-    const uint32_t avail = mic_ring_head - mic_ring_tail;
-    if (avail == 0) return;
-    uint8_t pkt[264]; // EP size: 2 ms = 66 stereo S16 frames
-    uint32_t n = avail < sizeof(pkt) ? avail : sizeof(pkt);
-    n -= n % 4; // whole stereo frames only
-    if (n == 0) return;
-    for (uint32_t i = 0; i < n; i++) {
-        pkt[i] = mic_ring[(mic_ring_tail + i) % MIC_RING_BYTES];
+    for (uint i = 0; i < TU_ARRAY_SIZE(frame); i++) {
+        if (!mic_cur_valid) {
+            if (queue_try_remove(&mic_pcm_fifo, &mic_cur)) {
+                mic_cur_valid = true;
+                mic_cur_pos = 0;
+            } else {
+                mic_streaming = false; // refill the jitter buffer
+                for (; i < TU_ARRAY_SIZE(frame); i++) frame[i] = 0;
+                break;
+            }
+        }
+        frame[i] = mic_cur.data[mic_cur_pos++];
+        if (mic_cur_pos == MIC_PCM_SAMPLES) mic_cur_valid = false;
     }
-    const uint16_t written = tud_audio_write(pkt, static_cast<uint16_t>(n));
-    mic_ring_tail += written;
 
-    static uint32_t bytes = 0, last_log_ms = 0;
-    bytes += written;
-    const uint32_t now = to_ms_since_boot(get_absolute_time());
-    if (now - last_log_ms >= 2000) {
-        last_log_ms = now;
-        printf("[MIC] usb bytes=%lu ring=%lu\n", bytes, mic_ring_head - mic_ring_tail);
-    }
+    tud_audio_write(frame, sizeof(frame));
+    return true;
 }
 
 void __not_in_flash_func(audio_loop)() {
@@ -247,7 +243,6 @@ void __not_in_flash_func(audio_loop)() {
     if (!core1_ready) return;
 
     audio_bt_task();
-    mic_usb_task();
 
     // The controller sends one mic report (0x13) per output report it
     // receives. While the mic is open and no speaker audio is clocking the
@@ -291,7 +286,9 @@ void audio_init() {
     queue_init(&audio_fifo, sizeof(pcm_block), 4);
     queue_init(&sbc_fifo, sizeof(sbc_frame), 2 * FRAMES_PER_REPORT);
     queue_init(&mic_sbc_fifo, sizeof(mic_sbc_frame), 8);
-    queue_init(&mic_pcm_fifo, sizeof(mic_pcm_block), 8);
+    // Deep enough to hold the ISR jitter-buffer reserve (6 blocks) plus an
+    // in-flight BT report burst.
+    queue_init(&mic_pcm_fifo, sizeof(mic_pcm_block), 16);
 #if ENABLE_DEBUG
     debug_fill_core1_stack_watermark(audio_core1_stack,
                                      sizeof(audio_core1_stack) / sizeof(audio_core1_stack[0]));

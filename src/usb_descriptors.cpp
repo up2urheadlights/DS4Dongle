@@ -202,7 +202,7 @@ uint8_t descriptor_configuration[] = {
     0x24, // bDescriptorType: CS_INTERFACE
     0x03, // bDescriptorSubtype: Output Terminal
     0x03, // bTerminalID: 3
-    0x01, 0x03, // wTerminalType: Speaker (0x0301)
+    0x02, 0x04, // wTerminalType: Headset (0x0402), matches the real DS4 v2
     0x04, // bAssocTerminal: 4 (paired with mic input)
     0x02, // bSourceID: 2 (Feature Unit)
     0x00, // iTerminal: 0
@@ -214,8 +214,8 @@ uint8_t descriptor_configuration[] = {
     0x04, // bTerminalID: 4
     0x02, 0x04, // wTerminalType: Headset (0x0402)
     0x03, // bAssocTerminal: 3 (paired with speaker)
-    0x02, // bNrChannels: 2 (mono mic duplicated; matches the real DS5's 2-ch mic)
-    0x03, 0x00, // wChannelConfig: Front Left + Front Right
+    0x01, // bNrChannels: 1 (mono; matches the real DS4 v2 mic)
+    0x00, 0x00, // wChannelConfig: none (master channel only)
     0x00, // iChannelNames: 0
     0x00, // iTerminal: 0
 
@@ -329,26 +329,27 @@ uint8_t descriptor_configuration[] = {
     0x01, // bDelay: 1 frame
     0x01, 0x00, // wFormatTag: PCM (0x0001)
 
-    // Format Type Descriptor (1-channel, 16-bit, 48kHz)
+    // Format Type Descriptor (1-channel, 16-bit, 16kHz - the real DS4 v2's mic format)
     0x0B, // bLength: 11
     0x24, // bDescriptorType: CS_INTERFACE
     0x02, // bDescriptorSubtype: FORMAT_TYPE
     0x01, // bFormatType: TYPE_I
-    0x02, // bNrChannels: 2
+    0x01, // bNrChannels: 1
     0x02, // bSubframeSize: 2
     0x10, // bBitResolution: 16
     0x01, // bSamFreqType: 1
-    0x00, 0x7D, 0x00, // tSamFreq: 32000 Hz
+    0x80, 0x3E, 0x00, // tSamFreq: 16000 Hz
 
     // Endpoint Descriptor (Audio IN: EP2)
     0x09, // bLength
     0x05, // bDescriptorType (ENDPOINT)
     0x82, // bEndpointAddress: IN EP2
     0x05, // bmAttributes: Isochronous, Asynchronous
-    // 2 ms of audio per packet: the device-side ISO IN re-arm misses every
-    // other full-speed frame, which halved the delivered rate with 1 ms
-    // packets (host measured 16.8 kHz). Double packets keep 32 kHz intact.
-    0x08, 0x01, // wMaxPacketSize: 264 bytes ((2*32+2) samples * 2 ch * 2 bytes)
+    // 1 ms packets are fine here: the EP is reloaded from the class driver's
+    // completion ISR (tud_audio_tx_done_isr in audio.cpp), so a frame's data
+    // is always staged before the next arm. Feeding from the main loop
+    // instead misses alternate frames and halves the delivered rate.
+    0x22, 0x00, // wMaxPacketSize: 34 bytes ((16+1) samples * 1 ch * 2 bytes)
     0x01, // bInterval: 1
     0x00, // bRefresh
     0x00, // bSynchAddress
@@ -803,7 +804,7 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
 
         case STRID_SERIAL:
             chr_count = board_usb_get_serial(_desc_str + 1, 32) + 1;
-            _desc_str[chr_count] = '2'; // refresh windows cache (bumped for 2-ch mic)
+            _desc_str[chr_count] = '3'; // refresh windows cache (bumped for the real-DS4v2 mono 16 kHz mic)
             break;
 
         default:
