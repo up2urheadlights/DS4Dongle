@@ -74,7 +74,10 @@ void config_valid() {
         printf("[Config] disable_pico_led is invalid\n");
     }
     if (body->polling_rate_mode > 2) {
-        body->polling_rate_mode = 1;
+        // Default to stock 250 Hz: a real DS4 v2's HID endpoints advertise
+        // bInterval 5, so faster modes make the dongle distinguishable over
+        // USB. Higher rates stay available as an explicit opt-in.
+        body->polling_rate_mode = 0;
         printf("[Config] polling_rate_mode is invalid\n");
     }
     if (body->audio_buffer_length < 16 || body->audio_buffer_length > 128) {
