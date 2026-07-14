@@ -15,10 +15,9 @@
   warning. All previous by-ear observations below are void and need re-testing
   with hardware volume active.
 
-- The volume does scale within 0% and 5% up from 10% it just gets very loud.
-  Looks like 10% is the max. Measure this via a loop back cable to microphone.
-  (Likely explained by the sticky-volume root cause above; re-test after
-  reflash.)
+- ~~The volume does scale within 0% and 5% up from 10% it just gets very
+  loud.~~ **Resolved 2026-07-14** by the sticky-volume fix plus the measured
+  mapping below. Re-test on macOS to confirm the log-feel is gone there too.
 
 - Add Microphone support or check if working. I will wire the cable to my speaker out for that. Ask me to do it.
 
@@ -62,22 +61,14 @@
 - Higher audio quality: captures show joint-stereo bitpool 51 (report 0x18)
   is accepted — nearly double the bitrate of the current bitpool-25 0x17 path.
 
-- **Volume curve fine-tuning.** The USB volume now maps onto DS4 byte 0..100
-  (was 0..255, which hit max loudness at ~10% slider). With this mapping the
-  slider scales across its full travel, but perceived loudness may top out
-  at ~60% slider travel (byte ~87 with the 0..100 mapping — a cubic host
-  slider sends ~-13 dB at 60%), so DS4_VOLUME_MAX in src/usb.cpp is set
-  to 87. Confirm with a jack→line-in RMS sweep of the raw volume byte to
-  find the exact saturation point, and check whether the byte-vs-dB
-  response is linear enough or needs a curve.
-
-- **Perceived loudness curve is not linear in slider travel** (feels
-  logarithmic: big jumps at the bottom, compressed at the top). Three curves
-  stack up: the host's cubic slider→dB mapping, our linear dB→byte mapping,
-  and the DS4's unknown byte→gain law. If the RMS sweep (above) shows the
-  byte→gain law is roughly linear in dB, the current mapping is correct and
-  the feel comes from the host curve; otherwise insert a compensation curve
-  in ds4_push_volume(). By-ear data so far is inconsistent (0..100 mapping
-  pegged at ~60% slider, 0..87 mapping at ~20%) — no host-curve model fits
-  both, so stop tuning by ear: do the measured sweep (jack→line-in, fixed
-  tone, step the host volume, RMS per step) and derive the mapping from data.
+- ~~Volume curve fine-tuning / perceived loudness curve.~~ **Resolved
+  2026-07-14 with measured data** (tools/volume_sweep.py, jack→line-in RMS
+  sweep of the raw byte 0..255): the DS4 headphone amp is linear in dB at
+  1.0 dB per byte (0.97 measured) from byte ~20 to byte 80 and saturates
+  hard at byte 80 (bytes 80..255 identical within 0.01 dB). Firmware now
+  maps byte = 80 + dB and advertises −60..0 dB as the feature-unit range.
+  End-to-end verification: sweeping the host hardware control 0..60 tracks
+  the analog output dB-for-dB (±0.15 dB) over the full range, with mild
+  compression only at the last −56/−60 dB steps. All previous by-ear
+  observations were taken with the byte pinned at max (sticky-volume bug)
+  and are void.
