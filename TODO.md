@@ -28,7 +28,12 @@
   every plug-in — feature report 0xA3 (firmware info) comes back 4 bytes
   short over USB. main.cpp's generic BT→USB feature forwarding strips
   1 id + 4 CRC bytes from the BT response; for 0xA3 that leaves 45 instead
-  of the 49 a real DS4 returns. The web tools likely probe the same report.
+  of the 49 a real DS4 returns. Confirmed in dualshock-tools source
+  (js/controllers/ds4-controller.js getInfo): clone = 0xA3 response not
+  exactly 49 bytes, plus feature 0x81 must succeed (it does). Fix
+  implemented (0xA3 zero-padded to 48+id bytes); verify against both web
+  tools after reflashing. ds.daidr.me source not found; likely probes the
+  same report.
 
 - Make sure that 2 or more of these firmware dongles are working on one system
 
