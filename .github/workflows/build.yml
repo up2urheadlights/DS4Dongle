@@ -36,7 +36,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install build dependencies
         run: |
@@ -45,7 +45,7 @@ jobs:
 
       - name: Cache ARM toolchain
         id: cache-arm-toolchain
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.ARM_TOOLCHAIN_PATH }}
           key: ${{ runner.os }}-arm-toolchain-15.2.rel1
@@ -58,7 +58,7 @@ jobs:
 
       - name: Cache Pico SDK
         id: cache-pico-sdk
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.PICO_SDK_PATH }}
           key: ${{ runner.os }}-pico-sdk-${{ env.PICO_SDK_REF }}-tinyusb-${{ env.TINYUSB_REF }}
@@ -89,7 +89,7 @@ jobs:
           cp build/ds4-bridge.uf2 "artifacts/${{ matrix.artifact }}.uf2"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: artifacts/${{ matrix.artifact }}.uf2
@@ -103,10 +103,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
