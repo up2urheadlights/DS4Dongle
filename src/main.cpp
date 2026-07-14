@@ -144,16 +144,20 @@ void __not_in_flash_func(on_bt_data)(CHANNEL_TYPE channel, uint8_t *data, uint16
 }
 
 // Translate the BT calibration feature report (0x05) into USB (0x02) layout.
-// The six gyro speed calibration words are ordered plus/minus-interleaved over
-// BT but plus-block-then-minus-block over USB (see hid-playstation
-// ds4_get_calibration_data). `bt` points at the payload after the report id.
+// The six gyro plus/minus calibration words are grouped all-plus-then-all-minus
+// (pitch+, yaw+, roll+, pitch-, yaw-, roll-) over BT, but interleaved per axis
+// (pitch+, pitch-, yaw+, yaw-, roll+, roll-) over USB (see hid-playstation
+// dualshock4_get_calibration_data). `bt` points at the payload after the report
+// id. Bias words (bytes 0-5) and accel words (bytes 18-35) share the same
+// layout on both transports, so the memcpy handles them; only the gyro range
+// words need reordering.
 static void ds4_calib_bt_to_usb(const uint8_t *bt, uint8_t *usb) {
     memcpy(usb, bt, 36);
     usb[6] = bt[6];   usb[7] = bt[7];   // gyro pitch plus
-    usb[8] = bt[10];  usb[9] = bt[11];  // gyro yaw plus
-    usb[10] = bt[14]; usb[11] = bt[15]; // gyro roll plus
-    usb[12] = bt[8];  usb[13] = bt[9];  // gyro pitch minus
-    usb[14] = bt[12]; usb[15] = bt[13]; // gyro yaw minus
+    usb[8] = bt[12];  usb[9] = bt[13];  // gyro pitch minus
+    usb[10] = bt[8];  usb[11] = bt[9];  // gyro yaw plus
+    usb[12] = bt[14]; usb[13] = bt[15]; // gyro yaw minus
+    usb[14] = bt[10]; usb[15] = bt[11]; // gyro roll plus
     usb[16] = bt[16]; usb[17] = bt[17]; // gyro roll minus
 }
 
