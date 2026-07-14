@@ -20,6 +20,7 @@
   mapping below. Re-test on macOS to confirm the log-feel is gone there too.
 
 - Add Microphone support or check if working. I will wire the cable to my speaker out for that. Ask me to do it.
+- Sometimes devices starts up with 5% even though shortly after it is 100% battery. maybe add a longer period of uncertainty
 
 - ~~Device is detected as "clone"/"fake" by the web tools.~~ **Resolved
   2026-07-14, verified against both sites.** Cause: feature report 0xA3

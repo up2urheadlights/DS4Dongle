@@ -915,10 +915,12 @@ void ds4_enable_mic(bool on) {
     ds4_set_output_hdr2(on ? 0x24 : 0x20);
     // Carry a mic volume with the enable: VolumeMic 0x00 has "special
     // behavior" (psdevwiki) and the enable was only seen to take effect on
-    // an output that also set volumes.
+    // an output that also set volumes. 0x20: max gain (0x40) clips hard on
+    // close-talking (tone-burst test 2026-07-14: >30% samples pinned);
+    // half gain showed no clipping at the same acoustic level.
     uint8_t payload[31]{};
     payload[0] = 0x40;  // EnableVolumeMicUpdate
-    payload[20] = on ? 0x40 : 0x00; // VolumeMic (0x01..0x40)
+    payload[20] = on ? 0x20 : 0x00; // VolumeMic (0x01..0x40)
     ds4_output(payload, sizeof(payload));
 }
 

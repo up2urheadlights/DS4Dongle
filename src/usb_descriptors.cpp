@@ -345,7 +345,10 @@ uint8_t descriptor_configuration[] = {
     0x05, // bDescriptorType (ENDPOINT)
     0x82, // bEndpointAddress: IN EP2
     0x05, // bmAttributes: Isochronous, Asynchronous
-    0x84, 0x00, // wMaxPacketSize: 132 bytes ((32+1) samples * 2 ch * 2 bytes)
+    // 2 ms of audio per packet: the device-side ISO IN re-arm misses every
+    // other full-speed frame, which halved the delivered rate with 1 ms
+    // packets (host measured 16.8 kHz). Double packets keep 32 kHz intact.
+    0x08, 0x01, // wMaxPacketSize: 264 bytes ((2*32+2) samples * 2 ch * 2 bytes)
     0x01, // bInterval: 1
     0x00, // bRefresh
     0x00, // bSynchAddress
