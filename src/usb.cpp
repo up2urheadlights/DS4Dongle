@@ -34,17 +34,31 @@ void usb_audio_reset_volume_sync() {
 // the DS4 headphone amp is linear in dB at 1.0 dB per byte step (0.97 measured)
 // from byte ~20 up to byte 80, and saturates hard at byte 80 -- bytes 80..255
 // are identical to within 0.01 dB. So the byte value IS a dB attenuation
-// relative to max: byte = 80 + dB. The usable range is -60..0 dB, which is
-// what the feature unit advertises as its volume range (GET_MIN below).
+// relative to max: byte = 80 + dB. The usable amp range is -60..0 dB.
 #define DS4_VOLUME_SAT 80.0f
 
+// The feature unit advertises the real DS4 v2's speaker range (-73..-1 dB) for
+// USB indistinguishability, which is wider than the amp's usable -60..0 dB. The
+// host-set dB (stored raw in volume[0] so GET_CUR echoes it exactly) is
+// linearly rescaled from the advertised span onto the usable span before the
+// byte mapping, so the full slider travel still spans the amp's full range.
+#define SPK_ADV_MIN_DB (-73.0f)
+#define SPK_ADV_MAX_DB (-1.0f)
+#define SPK_USABLE_MIN_DB (-60.0f)
+#define SPK_USABLE_MAX_DB (0.0f)
+
 // Push the current USB mute/volume state to the controller as a DS4 0x11
-// volume report. volume[0] is in dB (-60..0).
+// volume report. volume[0] is the host-set dB in the advertised range.
 static void ds4_push_volume() {
     if (get_config().lock_volume) return;
     uint8_t level = 0;
     if (!mute[0]) {
-        float v = DS4_VOLUME_SAT + volume[0];
+        float adv = volume[0];
+        if (adv < SPK_ADV_MIN_DB) adv = SPK_ADV_MIN_DB;
+        if (adv > SPK_ADV_MAX_DB) adv = SPK_ADV_MAX_DB;
+        const float frac = (adv - SPK_ADV_MIN_DB) / (SPK_ADV_MAX_DB - SPK_ADV_MIN_DB);
+        const float usable = SPK_USABLE_MIN_DB + frac * (SPK_USABLE_MAX_DB - SPK_USABLE_MIN_DB);
+        float v = DS4_VOLUME_SAT + usable;
         if (v < 0.0f) v = 0.0f;
         if (v > DS4_VOLUME_SAT) v = DS4_VOLUME_SAT;
         level = static_cast<uint8_t>(v + 0.5f);
@@ -152,26 +166,30 @@ static bool audio10_get_req_entity(uint8_t rhport, tusb_control_request_t const 
                     case AUDIO10_CS_REQ_GET_CUR:
                         TU_LOG2("    Get Volume of entity: %u\r\n", entityID); {
                             if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT && !spk_volume_synced) {
-                                // Seed from config (100 = 0 dB), clamped to the advertised -60..0 dB range.
-                                float seed = -100.0f + std::min(static_cast<int>(get_config().speaker_volume),100);
-                                volume[index] = std::max(seed, -60.0f);
+                                // Seed from config (100 = full), mapped into the advertised
+                                // -73..-1 dB range so GET_CUR sits in-range from the start.
+                                const float frac = std::min(static_cast<int>(get_config().speaker_volume), 100) / 100.0f;
+                                volume[index] = SPK_ADV_MIN_DB + frac * (SPK_ADV_MAX_DB - SPK_ADV_MIN_DB);
                                 spk_volume_synced = true;
                             }
                             int16_t vol = volume[index] * 256; // convert to 1/256 dB units
                             return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &vol, sizeof(vol));
                         }
 
+                    // Advertised ranges are byte-identical to a real DS4 v2
+                    // (captured 2026-07-14): SPK min -73 / max -1 / res 1 dB,
+                    // MIC min -23.25 / max +24 / res 0.75 dB. The advertised
+                    // range is decoupled from the internal amp mapping -- the
+                    // host-set dB is rescaled onto the measured -60..0 dB amp
+                    // curve in ds4_push_volume, so the slider still tracks
+                    // actual loudness (see SPK_ADV_* below).
                     case AUDIO10_CS_REQ_GET_MIN:
                         TU_LOG2("    Get Volume min of entity: %u\r\n", entityID); {
                             uint8_t min[2];
                             if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT) {
-                                // -60 dB: the DS4 amp's usable range (byte 20..80, 1 dB/byte;
-                                // see the DS4_VOLUME_SAT sweep notes above).
-                                min[0] = 0x00;
-                                min[1] = 0xc4;
+                                min[0] = 0x00; min[1] = 0xb7; // -73 dB
                             }else {
-                                min[0] = 0x00;
-                                min[1] = 0x00;
+                                min[0] = 0xc0; min[1] = 0xe8; // -23.25 dB
                             }
                             return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &min, sizeof(min));
                         }
@@ -180,11 +198,9 @@ static bool audio10_get_req_entity(uint8_t rhport, tusb_control_request_t const 
                         TU_LOG2("    Get Volume max of entity: %u\r\n", entityID); {
                             uint8_t max[2];
                             if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT) {
-                                max[0] = 0x00;
-                                max[1] = 0x00;
+                                max[0] = 0x00; max[1] = 0xff; // -1 dB
                             }else {
-                                max[0] = 0x00;
-                                max[1] = 0x30;
+                                max[0] = 0x00; max[1] = 0x18; // +24 dB
                             }
                             return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &max, sizeof(max));
                         }
@@ -193,11 +209,9 @@ static bool audio10_get_req_entity(uint8_t rhport, tusb_control_request_t const 
                         TU_LOG2("    Get Volume res of entity: %u\r\n", entityID); {
                             uint8_t res[2];
                             if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT) {
-                                res[0] = 0x00;
-                                res[1] = 0x01;
+                                res[0] = 0x00; res[1] = 0x01; // 1 dB
                             }else {
-                                res[0] = 0x7a;
-                                res[1] = 0x00;
+                                res[0] = 0xc0; res[1] = 0x00; // 0.75 dB
                             }
                             return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &res, sizeof(res));
                         }
