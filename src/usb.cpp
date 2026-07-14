@@ -13,6 +13,20 @@
 uint8_t mute[2] = {}; // 0: SPEAKER(0x02) 1: MIC(0x05)
 float volume[2] = {0.0f,48.0f}; // 0: SPEAKER(0x02) 1: MIC(0x05)
 
+// Whether the host has set/read the speaker volume yet. Until then, GET_CUR
+// seeds volume[0] from the config default. After that, GET_CUR must return
+// exactly what the host last SET: the Linux kernel probes the control with a
+// SET_CUR/GET_CUR round-trip (check_sticky_volume_control in
+// sound/usb/mixer.c) and, when the readback doesn't match, flags the mixer as
+// "sticky", drops the volume control, and pins it at max ("sticky mixer
+// values ... disabling" in dmesg). The host then falls back to software
+// volume and this firmware's dB->byte mapping is never exercised.
+static bool spk_volume_synced = false;
+
+void usb_audio_reset_volume_sync() {
+    spk_volume_synced = false;
+}
+
 #define UAC1_ENTITY_SPK_FEATURE_UNIT    0x02
 #define UAC1_ENTITY_MIC_FEATURE_UNIT    0x05
 
@@ -96,6 +110,7 @@ static bool audio10_set_req_entity(tusb_control_request_t const *p_request, uint
 
                         volume[index] = static_cast<float>(*reinterpret_cast<int16_t const *>(pBuff)) / 256;
                         if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT) {
+                            spk_volume_synced = true;
                             ds4_push_volume();
                         }
                         // Mic volume: DS4 mic input is not implemented yet.
@@ -136,8 +151,9 @@ static bool audio10_get_req_entity(uint8_t rhport, tusb_control_request_t const 
                 switch (p_request->bRequest) {
                     case AUDIO10_CS_REQ_GET_CUR:
                         TU_LOG2("    Get Volume of entity: %u\r\n", entityID); {
-                            if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT) {
+                            if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT && !spk_volume_synced) {
                                 volume[index] = -100.0f + std::min(static_cast<int>(get_config().speaker_volume),100);
+                                spk_volume_synced = true;
                             }
                             int16_t vol = volume[index] * 256; // convert to 1/256 dB units
                             return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &vol, sizeof(vol));

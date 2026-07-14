@@ -1,7 +1,24 @@
 # TODO
 
+- **ROOT CAUSE FOUND (2026-07-14) for all volume weirdness on Linux:** the
+  kernel never created a hardware volume control for the dongle. GET_CUR
+  recomputed the volume from config on every read instead of returning the
+  last SET value, so the kernel's write-then-readback probe
+  (check_sticky_volume_control, sound/usb/mixer.c) flagged the mixer as
+  "sticky mixer values ... disabling" (visible in dmesg), dropped the volume
+  control, and deliberately pinned the device at max volume. The desktop
+  slider was pure PipeWire *software* volume the whole time — the firmware's
+  dB→byte mapping (incl. DS4_VOLUME_MAX=87) was never exercised, which is why
+  no by-ear model ever fit. Fixed in firmware (GET_CUR now returns the last
+  SET value; config only seeds the initial value). After reflash, verify
+  `pactl list sinks` shows HW_VOLUME_CTRL and dmesg no longer logs the sticky
+  warning. All previous by-ear observations below are void and need re-testing
+  with hardware volume active.
+
 - The volume does scale within 0% and 5% up from 10% it just gets very loud.
   Looks like 10% is the max. Measure this via a loop back cable to microphone.
+  (Likely explained by the sticky-volume root cause above; re-test after
+  reflash.)
 
 - Add Microphone support or check if working. I will wire the cable to my speaker out for that. Ask me to do it.
 
