@@ -83,6 +83,12 @@
   the EnableMic field is 3 bits; bit meanings beyond 0x04 unknown), and
   whether the 8 ms keepalive should be replaced by echoing the host's
   output-report cadence.
+  **Hardening verified on-device 2026-07-14 evening:** mic capture, full
+  duplex (speaker tone + mic simultaneously), mic-after-duplex (decoder
+  survives), and gamepad input during mic (~500 reports/s, sane touch data,
+  no kernel errors) all pass. New minor item: capture delivers ~2.6 s per
+  8 s window — stream start latency ~5 s after opening the source;
+  investigate (PipeWire node resume vs. firmware enable handshake).
   Known issues found in the first long-run (fixes implemented and built,
   flash pending):
   - A misaligned frame (bare 0x9C matched inside SBC payload during the
