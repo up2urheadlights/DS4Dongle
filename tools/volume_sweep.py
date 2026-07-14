@@ -114,7 +114,9 @@ def main():
     subprocess.run(["pactl", "set-sink-mute", sink, "0"], check=True)
     subprocess.run(["pactl", "set-sink-volume", sink, "100%"], check=True)
 
-    total = args.settle + args.seconds + 1.0
+    # generous per-step overhead margin (parecord spawn/teardown) so the tone
+    # cannot run out before the last step
+    total = args.settle + args.seconds + 2.5
     tone = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     make_tone_wav(tone.name, len(steps) * total + 10)
 
