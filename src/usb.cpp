@@ -13,27 +13,41 @@
 uint8_t mute[2] = {}; // 0: SPEAKER(0x02) 1: MIC(0x05)
 float volume[2] = {0.0f,48.0f}; // 0: SPEAKER(0x02) 1: MIC(0x05)
 
+// Whether the host has set/read the speaker volume yet. Until then, GET_CUR
+// seeds volume[0] from the config default. After that, GET_CUR must return
+// exactly what the host last SET: the Linux kernel probes the control with a
+// SET_CUR/GET_CUR round-trip (check_sticky_volume_control in
+// sound/usb/mixer.c) and, when the readback doesn't match, flags the mixer as
+// "sticky", drops the volume control, and pins it at max ("sticky mixer
+// values ... disabling" in dmesg). The host then falls back to software
+// volume and this firmware's dB->byte mapping is never exercised.
+static bool spk_volume_synced = false;
+
+void usb_audio_reset_volume_sync() {
+    spk_volume_synced = false;
+}
+
 #define UAC1_ENTITY_SPK_FEATURE_UNIT    0x02
 #define UAC1_ENTITY_MIC_FEATURE_UNIT    0x05
 
-// The DS4's volume byte saturates well below 255 (with a 0..255 mapping the
-// host slider reached max loudness at ~10% travel). Map the USB dB range onto
-// 0..DS4_VOLUME_MAX instead. 87 is derived from listening: with a 0..100
-// mapping, loudness stopped increasing at ~60% slider travel; a cubic host
-// slider sends ~-13 dB there, i.e. byte ~87 = saturation. Confirm with a
-// measured sweep -- see TODO.md.
-#define DS4_VOLUME_MAX 87.0f
+// Measured with tools/volume_sweep.py (jack -> line-in RMS sweep, 2026-07-14):
+// the DS4 headphone amp is linear in dB at 1.0 dB per byte step (0.97 measured)
+// from byte ~20 up to byte 80, and saturates hard at byte 80 -- bytes 80..255
+// are identical to within 0.01 dB. So the byte value IS a dB attenuation
+// relative to max: byte = 80 + dB. The usable range is -60..0 dB, which is
+// what the feature unit advertises as its volume range (GET_MIN below).
+#define DS4_VOLUME_SAT 80.0f
 
 // Push the current USB mute/volume state to the controller as a DS4 0x11
-// volume report. volume[0] is in dB (-100..0).
+// volume report. volume[0] is in dB (-60..0).
 static void ds4_push_volume() {
     if (get_config().lock_volume) return;
     uint8_t level = 0;
     if (!mute[0]) {
-        float v = (100.0f + volume[0]) * (DS4_VOLUME_MAX / 100.0f);
+        float v = DS4_VOLUME_SAT + volume[0];
         if (v < 0.0f) v = 0.0f;
-        if (v > DS4_VOLUME_MAX) v = DS4_VOLUME_MAX;
-        level = static_cast<uint8_t>(v);
+        if (v > DS4_VOLUME_SAT) v = DS4_VOLUME_SAT;
+        level = static_cast<uint8_t>(v + 0.5f);
     }
     ds4_set_volume(level, level, level);
 }
@@ -96,6 +110,7 @@ static bool audio10_set_req_entity(tusb_control_request_t const *p_request, uint
 
                         volume[index] = static_cast<float>(*reinterpret_cast<int16_t const *>(pBuff)) / 256;
                         if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT) {
+                            spk_volume_synced = true;
                             ds4_push_volume();
                         }
                         // Mic volume: DS4 mic input is not implemented yet.
@@ -136,8 +151,11 @@ static bool audio10_get_req_entity(uint8_t rhport, tusb_control_request_t const 
                 switch (p_request->bRequest) {
                     case AUDIO10_CS_REQ_GET_CUR:
                         TU_LOG2("    Get Volume of entity: %u\r\n", entityID); {
-                            if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT) {
-                                volume[index] = -100.0f + std::min(static_cast<int>(get_config().speaker_volume),100);
+                            if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT && !spk_volume_synced) {
+                                // Seed from config (100 = 0 dB), clamped to the advertised -60..0 dB range.
+                                float seed = -100.0f + std::min(static_cast<int>(get_config().speaker_volume),100);
+                                volume[index] = std::max(seed, -60.0f);
+                                spk_volume_synced = true;
                             }
                             int16_t vol = volume[index] * 256; // convert to 1/256 dB units
                             return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, &vol, sizeof(vol));
@@ -147,8 +165,10 @@ static bool audio10_get_req_entity(uint8_t rhport, tusb_control_request_t const 
                         TU_LOG2("    Get Volume min of entity: %u\r\n", entityID); {
                             uint8_t min[2];
                             if (entityID == UAC1_ENTITY_SPK_FEATURE_UNIT) {
+                                // -60 dB: the DS4 amp's usable range (byte 20..80, 1 dB/byte;
+                                // see the DS4_VOLUME_SAT sweep notes above).
                                 min[0] = 0x00;
-                                min[1] = 0x9c;
+                                min[1] = 0xc4;
                             }else {
                                 min[0] = 0x00;
                                 min[1] = 0x00;

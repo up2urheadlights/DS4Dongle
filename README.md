@@ -15,6 +15,12 @@ See [Releases](https://github.com/snipem/DS4Dongle/releases) for the images.
 
 ## Features
 
+- All Buttons work
+- Touchpad works (one or two touch points and clicks)
+- Gyroscope and Accelerometer works
+- LED
+- Charging detection
+
 - Wired DS4 v2 USB persona with the real HID report descriptor: gamepad,
   motion sensors, touchpad, rumble, lightbar
 - Calibration passthrough (BT report 0x05 translated to USB report 0x02)

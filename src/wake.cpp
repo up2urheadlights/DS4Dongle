@@ -15,6 +15,7 @@
 #include "pico/time.h"
 #include "ps_shortcut.h"
 #include "config.h"
+#include "usb.h"
 
 
 #define WAKE_KBD_INSTANCE     1
@@ -180,6 +181,7 @@ extern "C" void tud_mount_cb(void) {
     host_resumed_event = true;
     suspend_at_us = 0;
     reconnect_until_us = 0;   // reconnect finished re-enumerating; end the grace early
+    usb_audio_reset_volume_sync();
 }
 
 void wake_on_bt_input(const uint8_t *hid_input, uint16_t len) {

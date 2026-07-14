@@ -88,7 +88,33 @@ void __not_in_flash_func(interrupt_loop)() {
 // USB report 0x01 payload byte-for-byte (sticks, buttons, IMU, battery,
 // trackpad), so bridging is a plain copy from data+4.
 void __not_in_flash_func(on_bt_data)(CHANNEL_TYPE channel, uint8_t *data, uint16_t len) {
-    if (channel == INTERRUPT && len >= 4 + 63 && data[1] == 0x11) {
+    // Log unfamiliar interrupt reports (rate-limited): 0x11 is the normal
+    // input; 0x12..0x19 are state + headset-mic audio in increasing sizes
+    // (the controller picks the size; handled below).
+    if (channel == INTERRUPT && len >= 2 && (data[1] < 0x11 || data[1] > 0x19)) {
+        static uint32_t last_log_ms = 0;
+        const uint32_t now = to_ms_since_boot(get_absolute_time());
+        if (now - last_log_ms >= 1000) {
+            last_log_ms = now;
+            printf("[BT] input report 0x%02X len=%u:", data[1], len);
+            for (int i = 0; i < 16 && i < len; i++) printf(" %02x", data[i]);
+            printf("\n");
+        }
+    }
+    // Mic audio rides in reports 0x12..0x19 after a state block that is
+    // layout-identical to 0x11's.
+    if (channel == INTERRUPT && len >= 4 + 63 && data[1] >= 0x12 && data[1] <= 0x19) {
+        audio_mic_bt_data(data, len);
+    }
+    if (channel == INTERRUPT && len >= 4 + 63 && data[1] >= 0x11 && data[1] <= 0x19) {
+        // During duplex audio some report variants were seen with a state
+        // block that is NOT 0x11-layout (hid-playstation rejected the
+        // forwarded reports with num_touch_reports=213). Only forward states
+        // that pass a touch-count sanity check; audio parsing above is
+        // unaffected.
+        if (data[1] != 0x11 && data[4 + 33] > 4) {
+            return;
+        }
         // Battery/ext byte: bit5 = headset plugged into the controller jack.
         set_headset((data[4 + 29] & 0x20) != 0);
 
@@ -197,8 +223,20 @@ uint16_t tud_hid_get_report_cb(uint8_t itf, uint8_t report_id, hid_report_type_t
     if (feature_data.size() <= 1 + 4) {
         return 0;
     }
-    const uint16_t payload_len = feature_data.size() - 1 - 4;
+    uint16_t payload_len = feature_data.size() - 1 - 4;
+    if (payload_len > reqlen) payload_len = reqlen;
     memcpy(buffer, feature_data.data() + 1, payload_len);
+
+    // 0xA3 firmware info: the BT payload is 3 bytes shorter than the USB
+    // report. hid-playstation ("expected 49 got 45") and the dualshock-tools
+    // clone check both require the full 48+id bytes; every field they parse
+    // (build date, hw/sw versions, all < offset 0x2d) fits in the BT payload,
+    // so zero-pad the tail.
+    constexpr uint16_t A3_USB_PAYLOAD_LEN = 48;
+    if (report_id == 0xA3 && payload_len < A3_USB_PAYLOAD_LEN && reqlen >= A3_USB_PAYLOAD_LEN) {
+        memset(buffer + payload_len, 0, A3_USB_PAYLOAD_LEN - payload_len);
+        payload_len = A3_USB_PAYLOAD_LEN;
+    }
     return payload_len;
 }
 

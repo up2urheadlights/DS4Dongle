@@ -40,5 +40,8 @@ void bt_get_controller_mac(uint8_t mac[6]);
 void bt_get_local_mac(uint8_t mac[6]);
 void ds4_set_led(uint8_t r, uint8_t g, uint8_t b);
 void ds4_set_volume(uint8_t left, uint8_t right, uint8_t speaker);
+void ds4_set_output_hdr2(uint8_t v); // debug: 0x11 output header byte 2 (mic-enable bits)
+uint8_t ds4_get_output_hdr2();
+void ds4_enable_mic(bool on); // start/stop headset-mic streaming (input report 0x13)
 
 #endif //DS4_BRIDGE_BT_H

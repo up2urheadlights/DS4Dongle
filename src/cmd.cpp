@@ -11,6 +11,7 @@
 #include "bt.h"
 #include "config.h"
 #include "device/usbd.h"
+#include "pico/bootrom.h"
 #include "pico/time.h"
 #include "audio.h"
 #include "wake.h"
@@ -80,6 +81,14 @@ void pico_cmd_set(uint8_t report_id, uint8_t const *buffer, uint16_t bufsize) {
     // 0x01 update config in variable
     // 0x02 write config to flash
     // 0x03 reconnect tinyusb device;
+    // 0x04 reboot into BOOTSEL for reflashing (tools/reboot_bootsel.py)
+    // 0x05 set the raw DS4 volume byte (debug: bypasses the USB dB mapping,
+    //      for the jack->line-in RMS sweep; volatile, next USB volume event
+    //      overwrites it)
+    // 0x06 send a raw DS4 0x11 output-report payload (debug: poke
+    //      flag bytes from the host, e.g. for the mic-enable research)
+    // 0x07 set the 0x11 output header byte 2 for subsequent outputs
+    //      (debug: bits 0-2 = EnableMic, bit7 = EnableAudio)
     if (buffer[0] == 0x01) {
 #if ENABLE_VERBOSE
         printf("[CMD] Enter config set func\n");
@@ -96,5 +105,25 @@ void pico_cmd_set(uint8_t report_id, uint8_t const *buffer, uint16_t bufsize) {
         tud_disconnect();
         sleep_ms(150);
         tud_connect();
+    }
+    if (buffer[0] == 0x04) {
+        printf("[CMD] Reboot into BOOTSEL\n");
+        reset_usb_boot(0, 0);
+    }
+    if (buffer[0] == 0x05 && bufsize >= 2) {
+        printf("[CMD] Set raw volume byte %u\n", buffer[1]);
+        ds4_set_volume(buffer[1], buffer[1], buffer[1]);
+    }
+    if (buffer[0] == 0x06 && bufsize >= 2) {
+        uint8_t payload[31]{};
+        uint16_t n = bufsize - 1;
+        if (n > sizeof(payload)) n = sizeof(payload);
+        memcpy(payload, buffer + 1, n);
+        printf("[CMD] Raw output report, flags 0x%02X\n", payload[0]);
+        ds4_output(payload, sizeof(payload));
+    }
+    if (buffer[0] == 0x07 && bufsize >= 2) {
+        printf("[CMD] Output header byte2 = 0x%02X\n", buffer[1]);
+        ds4_set_output_hdr2(buffer[1]);
     }
 }

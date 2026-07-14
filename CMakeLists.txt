@@ -304,6 +304,7 @@ target_link_libraries(ds4-bridge
         tinyusb_device
         tinyusb_board
         pico_btstack_sbc_encoder
+        pico_btstack_sbc_decoder
 )
 
 pico_add_extra_outputs(ds4-bridge)
