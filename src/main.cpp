@@ -88,6 +88,19 @@ void __not_in_flash_func(interrupt_loop)() {
 // USB report 0x01 payload byte-for-byte (sticks, buttons, IMU, battery,
 // trackpad), so bridging is a plain copy from data+4.
 void __not_in_flash_func(on_bt_data)(CHANNEL_TYPE channel, uint8_t *data, uint16_t len) {
+    // Mic research: headset-mic audio is expected to arrive as a bigger input
+    // report (0x14/0x15/...; undocumented). Log unfamiliar interrupt reports,
+    // rate-limited so the hot path stays cheap.
+    if (channel == INTERRUPT && len >= 2 && data[1] != 0x11) {
+        static uint32_t last_log_ms = 0;
+        const uint32_t now = to_ms_since_boot(get_absolute_time());
+        if (now - last_log_ms >= 1000) {
+            last_log_ms = now;
+            printf("[BT] input report 0x%02X len=%u:", data[1], len);
+            for (int i = 0; i < 16 && i < len; i++) printf(" %02x", data[i]);
+            printf("\n");
+        }
+    }
     if (channel == INTERRUPT && len >= 4 + 63 && data[1] == 0x11) {
         // Battery/ext byte: bit5 = headset plugged into the controller jack.
         set_headset((data[4 + 29] & 0x20) != 0);
