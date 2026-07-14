@@ -1,9 +1,17 @@
 # TODO
 
-- Add Microphone support
-
 - The volume does scale within 0% and 5% up from 10% it just gets very loud.
-  Looks like 10% is the max
+  Looks like 10% is the max. Measure this via a loop back cable to microphone.
+
+- Add Microphone support or check if working. I will wire the cable to my speaker out for that. Ask me to do it.
+
+- Device is detected as "clone" by https://dualshock-tools.github.io/ and "fake" by https://ds.daidr.me/ why is that?
+
+- Make sure that 2 or more of these firmware dongles are working on one system
+
+- Auto turn off device after 15 minutes of non usage, make this confiurable
+
+- use tools/config_tool.py to make configurations accessible
 
 - **Polling rate: config SET_REPORT never reaches the firmware.** The dongle
   supports three HID polling modes (`polling_rate_mode`: 0 = 250 Hz,
