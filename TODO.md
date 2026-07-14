@@ -23,6 +23,12 @@
 - Add Microphone support or check if working. I will wire the cable to my speaker out for that. Ask me to do it.
 
 - Device is detected as "clone" by https://dualshock-tools.github.io/ and "fake" by https://ds.daidr.me/ why is that?
+  Lead (2026-07-14): hid-playstation logs "Invalid byte count transferred,
+  expected 49 got 45 / Failed to retrieve DualShock4 firmware info: -22" at
+  every plug-in — feature report 0xA3 (firmware info) comes back 4 bytes
+  short over USB. main.cpp's generic BT→USB feature forwarding strips
+  1 id + 4 CRC bytes from the BT response; for 0xA3 that leaves 45 instead
+  of the 49 a real DS4 returns. The web tools likely probe the same report.
 
 - Make sure that 2 or more of these firmware dongles are working on one system
 
