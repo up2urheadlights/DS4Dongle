@@ -37,13 +37,13 @@
 
 - use tools/config_tool.py to make configurations accessible
 
-- **Polling rates: proper testing of all three modes.** Setting them works
-  now (item below), but only mode 2 has been measured (~760 Hz effective,
-  median report gap 1.00 ms — capped by the DS4's ~800 Hz BT rate). Test
-  each of mode 0 (250 Hz), 1 (500 Hz), 2 (1000 Hz): measure the actual
-  input-report rate and gap distribution via hidraw timestamps, confirm the
-  enumerated bInterval per mode, check input latency subjectively in a game,
-  and verify audio (speaker + mic) stays glitch-free per mode — especially
+- **Polling rates: proper testing of all three modes.** Rates measured
+  2026-07-14 via hidraw timestamps after a config + USB reconnect per mode:
+  mode 0 → bInterval 4, exactly 250 reports/s (median gap 4.00 ms);
+  mode 1 → bInterval 2, exactly 500/s (2.00 ms); mode 2 → bInterval 1,
+  ~755/s effective with 1.00 ms median gap (capped by the DS4's ~800 Hz BT
+  rate). Remaining: subjective input-latency check in a game per mode, and
+  verify audio (speaker + mic) stays glitch-free per mode — especially
   mode 2 alongside isochronous audio. Also check whether mode 2's
   send-only-when-dirty path drops the report rate when the controller idles
   and whether hosts/games mind.
@@ -83,6 +83,19 @@
   the EnableMic field is 3 bits; bit meanings beyond 0x04 unknown), and
   whether the 8 ms keepalive should be replaced by echoing the host's
   output-report cadence.
+  Known issues found in the first long-run (fixes implemented and built,
+  flash pending):
+  - A misaligned frame (bare 0x9C matched inside SBC payload during the
+    duplex test) wedged the OI decoder permanently — sbc frames kept being
+    consumed but no PCM came out until reboot. Fix: match the full frame
+    header 9c 31 1d and reinit the decoder on every mic open.
+  - During duplex the controller sent report variants whose state block is
+    not 0x11-layout; hid-playstation rejected the forwarded reports
+    ("invalid num_touch_reports=213"), freezing gamepad input. Fix:
+    touch-count sanity check before forwarding; needs a proper layout
+    capture for those report ids later.
+  - Otherwise stable: 3 h of continuous mic streaming (1.36M SBC frames)
+    without a firmware crash, queues healthy.
 
 - Dual audio sinks (speaker + headphone jack as two USB audio functions):
   first attempt failed; retry on top of the fixed sequential L2CAP pairing

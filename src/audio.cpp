@@ -93,7 +93,16 @@ bool audio_headset_plugged() {
 // Called from tud_audio_set_itf_cb when the host opens/closes the mic IN
 // interface. Tells the controller to start/stop streaming headset-mic audio
 // (input report 0x13).
+static volatile bool mic_decoder_reset_pending = false;
+
 void set_mic_active(bool active) {
+    if (active && !mic_active) {
+        // Fresh session: drop stale frames and have core1 reinit the decoder
+        // (a garbage frame can leave the OI decoder without sync forever).
+        while (queue_try_remove(&mic_sbc_fifo, NULL)) {}
+        while (queue_try_remove(&mic_pcm_fifo, NULL)) {}
+        mic_decoder_reset_pending = true;
+    }
     mic_active = active;
     ds4_enable_mic(active && get_config().mic_select != 3);
 }
@@ -104,7 +113,10 @@ void __not_in_flash_func(audio_mic_bt_data)(const uint8_t *data, uint16_t len) {
     static uint32_t frames = 0, last_log_ms = 0;
     if (!mic_active || get_config().mic_select == 3) return;
     for (uint16_t i = MIC_SBC_SCAN_FROM; i + MIC_SBC_FRAME_LEN <= len - 4; i++) {
-        if (data[i] != 0x9C) continue;
+        // Match the full frame header (16 kHz mono 16/8 loudness, bitpool
+        // 29), not just the syncword: a lone 0x9C also occurs inside SBC
+        // payloads and a misaligned frame wedges the decoder.
+        if (data[i] != 0x9C || data[i + 1] != 0x31 || data[i + 2] != 0x1D) continue;
         if (queue_is_full(&mic_sbc_fifo)) {
             queue_try_remove(&mic_sbc_fifo, NULL);
         }
@@ -275,6 +287,10 @@ static void mic_handle_pcm(int16_t *data, int num_samples, int num_channels,
 
 // Mic SBC frames from core0 -> decode -> mic_pcm_fifo for the USB IN stream.
 static void __not_in_flash_func(mic_proc)() {
+    if (mic_decoder_reset_pending) {
+        mic_decoder_reset_pending = false;
+        sbc_decoder->configure(&sbc_decoder_ctx, SBC_MODE_STANDARD, mic_handle_pcm, NULL);
+    }
     mic_sbc_frame frame{};
     if (!queue_try_remove(&mic_sbc_fifo, &frame)) {
         return;

@@ -88,9 +88,6 @@ void __not_in_flash_func(interrupt_loop)() {
 // USB report 0x01 payload byte-for-byte (sticks, buttons, IMU, battery,
 // trackpad), so bridging is a plain copy from data+4.
 void __not_in_flash_func(on_bt_data)(CHANNEL_TYPE channel, uint8_t *data, uint16_t len) {
-    // Mic research: headset-mic audio is expected to arrive as a bigger input
-    // report (0x14/0x15/...; undocumented). Log unfamiliar interrupt reports,
-    // rate-limited so the hot path stays cheap.
     // Log unfamiliar interrupt reports (rate-limited): 0x11 is the normal
     // input; 0x12..0x19 are state + headset-mic audio in increasing sizes
     // (the controller picks the size; handled below).
@@ -110,6 +107,14 @@ void __not_in_flash_func(on_bt_data)(CHANNEL_TYPE channel, uint8_t *data, uint16
         audio_mic_bt_data(data, len);
     }
     if (channel == INTERRUPT && len >= 4 + 63 && data[1] >= 0x11 && data[1] <= 0x19) {
+        // During duplex audio some report variants were seen with a state
+        // block that is NOT 0x11-layout (hid-playstation rejected the
+        // forwarded reports with num_touch_reports=213). Only forward states
+        // that pass a touch-count sanity check; audio parsing above is
+        // unaffected.
+        if (data[1] != 0x11 && data[4 + 33] > 4) {
+            return;
+        }
         // Battery/ext byte: bit5 = headset plugged into the controller jack.
         set_headset((data[4 + 29] & 0x20) != 0);
 
