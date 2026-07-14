@@ -11,7 +11,11 @@
 #include "utils.h"
 
 uint8_t mute[2] = {}; // 0: SPEAKER(0x02) 1: MIC(0x05)
-float volume[2] = {0.0f,48.0f}; // 0: SPEAKER(0x02) 1: MIC(0x05)
+// 0: SPEAKER(0x02) 1: MIC(0x05). Mic seed kept within the advertised
+// -23.25..+24 dB range so GET_CUR is never out of bounds before the host
+// sets it. The mic gain to the controller is fixed regardless, so this only
+// affects the value echoed on the USB control.
+float volume[2] = {0.0f, 0.0f};
 
 // Whether the host has set/read the speaker volume yet. Until then, GET_CUR
 // seeds volume[0] from the config default. After that, GET_CUR must return
