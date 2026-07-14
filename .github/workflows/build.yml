@@ -91,7 +91,10 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.artifact }}
+          name: ${{ matrix.artifact }}.uf2
+          # archive: false uploads the raw .uf2 (not a .zip), so it downloads
+          # ready to flash straight onto the RPI-RP2 drive.
+          archive: false
           path: artifacts/${{ matrix.artifact }}.uf2
           if-no-files-found: error
 
