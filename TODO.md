@@ -40,6 +40,17 @@
 
 - use tools/config_tool.py to make configurations accessible
 
+- **Polling rates: proper testing of all three modes.** Setting them works
+  now (item below), but only mode 2 has been measured (~760 Hz effective,
+  median report gap 1.00 ms — capped by the DS4's ~800 Hz BT rate). Test
+  each of mode 0 (250 Hz), 1 (500 Hz), 2 (1000 Hz): measure the actual
+  input-report rate and gap distribution via hidraw timestamps, confirm the
+  enumerated bInterval per mode, check input latency subjectively in a game,
+  and verify audio (speaker + mic) stays glitch-free per mode — especially
+  mode 2 alongside isochronous audio. Also check whether mode 2's
+  send-only-when-dirty path drops the report rate when the controller idles
+  and whether hosts/games mind.
+
 - ~~Polling rate: config SET_REPORT never reaches the firmware.~~ **Resolved
   2026-07-14: does not reproduce against the current firmware.**
   `config_tool.py set polling_rate_mode=2` updates RAM and flash, and after a
