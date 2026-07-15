@@ -130,9 +130,12 @@
   symptom. PR #6 corrects it to offset 32. The count check is still a
   heuristic (drops anything > 4); a future revision/layout that legitimately
   carries a higher count would drop valid input. First suspect for any
-  "controller input freezes during mic/voice chat" report. Related:
-  `plug_headset` isn't cleared on disconnect, so it latches across an unplug
-  (harmless today).
+  "controller input freezes during mic/voice chat" report. Non-blocking
+  follow-ups (from the PR #6 review): (1) belt-and-suspenders — move
+  `set_headset()` above the guard so the headset-jack flag still updates on a
+  report that fails the sanity check (guards against headset audio routing to
+  the built-in speaker if the guard ever fires); (2) `plug_headset` isn't
+  cleared on disconnect, so it latches across an unplug (harmless today).
 
 - Dual audio sinks (speaker + headphone jack as two USB audio functions):
   first attempt failed; retry on top of the fixed sequential L2CAP pairing
