@@ -1,5 +1,9 @@
 # TODO
 
+- **DualShock 4 units tested with the dongle (extend as more are covered):**
+  - CUH-ZCT2U — DS4 v2, North American SKU (USB PID 09CC).
+  - CUH-ZCT1U — DS4 v1, North American SKU (USB PID 05C4).
+
 - **ROOT CAUSE FOUND (2026-07-14) for all volume weirdness on Linux:** the
   kernel never created a hardware volume control for the dongle. GET_CUR
   recomputed the volume from config on every read instead of returning the
@@ -103,6 +107,32 @@
     capture for those report ids later.
   - Otherwise stable: 3 h of continuous mic streaming (1.36M SBC frames)
     without a firmware crash, queues healthy.
+
+- **Mic under-clocks during duplex audio (analyzed 2026-07-15, NOT yet
+  fixed).** Sharpens the open keepalive question above. With both the speaker
+  (playback) and mic (capture) endpoints open, the keepalive in `audio_loop`
+  is gated off by `!spk_active`, so the mic is clocked only by the 16 ms 0x17
+  speaker reports — half the 8 ms it needs (~62 vs ~126 frames/s) →
+  jitter-buffer underrun → choppy mic; if the speaker endpoint is open but
+  silent (no 0x17) the mic can stall outright. The 2026-07-14 "full duplex …
+  all pass" run used a continuous tone (0x17 always flowing) and checked
+  survival, not mic frame rate, so it would not have caught this. Designed fix
+  (not implemented): shared-clock rework — fire a no-op 0x11 whenever ≥8 ms
+  have passed since *any* output report (0x17 or keepalive), regardless of
+  spk_active. NOT verified on hardware yet (all mic tests so far mic-only).
+  Watch for: choppy/dropping mic in voice chat while game audio plays.
+
+- **Duplex touch guard fixed (PR #6), but stays a heuristic.** The
+  touch-count sanity check above was reading the wrong byte — payload offset
+  33 (the rolling touch-report timestamp) instead of offset 32
+  (num_touch_reports) — so during a mic session (only 0x12–0x19 reports,
+  never 0x11) it dropped nearly all controller input: the "missing inputs"
+  symptom. PR #6 corrects it to offset 32. The count check is still a
+  heuristic (drops anything > 4); a future revision/layout that legitimately
+  carries a higher count would drop valid input. First suspect for any
+  "controller input freezes during mic/voice chat" report. Related:
+  `plug_headset` isn't cleared on disconnect, so it latches across an unplug
+  (harmless today).
 
 - Dual audio sinks (speaker + headphone jack as two USB audio functions):
   first attempt failed; retry on top of the fixed sequential L2CAP pairing
