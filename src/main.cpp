@@ -111,8 +111,8 @@ void __not_in_flash_func(on_bt_data)(CHANNEL_TYPE channel, uint8_t *data, uint16
         // block that is NOT 0x11-layout (hid-playstation rejected the
         // forwarded reports with num_touch_reports=213). Only forward states
         // that pass a touch-count sanity check; audio parsing above is
-        // unaffected.
-        if (data[1] != 0x11 && data[4 + 33] > 4) {
+        // unaffected. num_touch_reports is at payload offset 32.
+        if (data[1] != 0x11 && data[4 + 32] > 4) {
             return;
         }
         // Battery/ext byte: bit5 = headset plugged into the controller jack.
